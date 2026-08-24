@@ -39,10 +39,11 @@ export class BristnoteDatabase extends Dexie {
 export const db = new BristnoteDatabase();
 
 export const getCurrentTimestamp = () => Date.now();
+export const createEntityId = () => crypto.randomUUID();
 
 export const createNote = async (): Promise<NoteEntity> => {
     const newNote: NoteEntity = {
-        id: Date.now().toString(),
+        id: createEntityId(),
         title: 'Untitled Note',
         content: '',
         updatedAt: Date.now(),
@@ -54,7 +55,7 @@ export const createNote = async (): Promise<NoteEntity> => {
 
 export const createTask = async (title: string, quadrant: TaskEntity['quadrant']): Promise<TaskEntity> => {
     const newTask: TaskEntity = {
-        id: Date.now().toString(),
+        id: createEntityId(),
         title,
         quadrant,
         status: 'pending',

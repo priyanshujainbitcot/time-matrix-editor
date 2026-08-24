@@ -115,7 +115,7 @@ export default function TaskList({ tasks }: TaskListProps) {
     const handleRestore = async (deletedItem: DeletedTaskItem) => {
         const { task } = deletedItem;
         const restoredTask = {
-            id: Date.now().toString(),
+            id: task.id,
             title: task.title,
             quadrant: task.quadrant,
             status: task.status,

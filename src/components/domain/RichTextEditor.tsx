@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
+import DOMPurify from 'dompurify';
 import { Bold, Italic, Link, Underline, Strikethrough, List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateNote, updateNoteTitle, addNote } from '@/store/slices/notesSlice';
@@ -13,6 +14,11 @@ const escapeHtml = (value: string) => value
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+
+const sanitizeNoteHtml = (html: string) => DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|data:image\/(?:gif|jpeg|png|webp);)/i,
+});
 
 const renderInlineMarkdown = (value: string) => {
     const replacements: string[] = [];
@@ -121,14 +127,59 @@ export default function RichTextEditor() {
 
     const activeNoteId = useAppSelector(state => state.notes.activeNoteId);
     const activeNote = useAppSelector(state => state.notes.items.find(n => n.id === activeNoteId));
+    const pendingSaveRef = useRef<{ id: string; content: string; title: string } | null>(null);
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const saveQueueRef = useRef(Promise.resolve());
+
+    function showLinkError(message: string) {
+        setToast({ type: 'error', message, visible: true });
+    }
+
+    const enqueueNoteSave = useCallback((note: { id: string; content: string; title: string }) => {
+        saveQueueRef.current = saveQueueRef.current
+            .catch(() => undefined)
+            .then(async () => {
+                try {
+                    await db.notes.update(note.id, {
+                        content: note.content,
+                        title: note.title,
+                        updatedAt: getCurrentTimestamp(),
+                    });
+                } catch (error) {
+                    console.error('Failed to save note changes:', error);
+                    showLinkError('Could not save note changes.');
+                }
+            });
+    }, []);
+
+    const flushPendingSave = useCallback(() => {
+        if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+        }
+
+        const pendingSave = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        if (pendingSave) enqueueNoteSave(pendingSave);
+    }, [enqueueNoteSave]);
+
+    const scheduleNoteSave = useCallback((note: { id: string; content: string; title: string }) => {
+        pendingSaveRef.current = note;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(flushPendingSave, 300);
+    }, [flushPendingSave]);
 
 
     useEffect(() => {
+        if (pendingSaveRef.current && pendingSaveRef.current.id !== activeNoteId) {
+            flushPendingSave();
+        }
+
         if (activeNote) {
             const content = activeNote.content || '';
             const isRawMarkdown = !/<[a-z][\s\S]*>/i.test(content)
                 && /(^|\n)\s*(#{1,6}\s|[-*+]\s+\S|\d+[.)]\s+\S|!\[)/m.test(content);
-            const formattedContent = isRawMarkdown ? markdownToHtml(content) : content;
+            const formattedContent = sanitizeNoteHtml(isRawMarkdown ? markdownToHtml(content) : content);
 
             if (editorRef.current && editorRef.current.innerHTML !== formattedContent) {
                 editorRef.current.innerHTML = formattedContent;
@@ -136,32 +187,22 @@ export default function RichTextEditor() {
 
             if (isRawMarkdown) {
                 dispatch(updateNote({ id: activeNote.id, content: formattedContent, title: activeNote.title }));
-                void db.notes.update(activeNote.id, {
-                    content: formattedContent,
-                    updatedAt: Date.now(),
-                });
+                scheduleNoteSave({ id: activeNote.id, content: formattedContent, title: activeNote.title });
             }
         } else {
             if (editorRef.current) {
                 editorRef.current.innerHTML = '';
             }
         }
-    }, [activeNoteId, activeNote, dispatch]);
+    }, [activeNoteId, activeNote, dispatch, flushPendingSave, scheduleNoteSave]);
 
-    const handleTitleChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newTitle = e.target.value;
         if (!activeNote) return;
 
         dispatch(updateNoteTitle({ id: activeNote.id, title: newTitle }));
-        try {
-            await db.notes.update(activeNote.id, {
-                title: newTitle,
-                updatedAt: getCurrentTimestamp(),
-            });
-        } catch (error) {
-            console.error('Failed to save note title:', error);
-            showLinkError('Could not save note title.');
-        }
+        const currentContent = editorRef.current?.innerHTML || activeNote.content || '';
+        scheduleNoteSave({ id: activeNote.id, content: sanitizeNoteHtml(currentContent), title: newTitle });
     };
 
     const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -181,10 +222,6 @@ export default function RichTextEditor() {
     const handleToolbarMouseDown = (e: React.MouseEvent, command: string, value?: string) => {
         e.preventDefault();
         formatText(command, value);
-    };
-
-    const showLinkError = (message: string) => {
-        setToast({ type: 'error', message, visible: true });
     };
 
     const handleLinkMouseDown = (e: React.MouseEvent) => {
@@ -259,10 +296,13 @@ export default function RichTextEditor() {
 
     const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
         const text = e.clipboardData.getData('text/plain');
-        if (!text || !/[#*_~\[\]\(\)]/.test(text)) return;
-
         e.preventDefault();
-        document.execCommand('insertHTML', false, markdownToHtml(text));
+        if (/[#*_~\[\]\(\)]/.test(text)) {
+            document.execCommand('insertHTML', false, sanitizeNoteHtml(markdownToHtml(text)));
+        } else {
+            const html = e.clipboardData.getData('text/html');
+            document.execCommand('insertHTML', false, sanitizeNoteHtml(html || escapeHtml(text)));
+        }
         saveContent();
     };
 
@@ -274,23 +314,14 @@ export default function RichTextEditor() {
         }
     };
 
-    const saveContent = async () => {
+    const saveContent = (saveImmediately = false) => {
         if (!editorRef.current || !activeNote) return;
-        const content = editorRef.current.innerHTML;
+        const content = sanitizeNoteHtml(editorRef.current.innerHTML);
         const currentTitle = activeNote.title || 'Untitled Note';
 
         dispatch(updateNote({ id: activeNote.id, content, title: currentTitle }));
-
-        try {
-            await db.notes.update(activeNote.id, {
-                content,
-                title: currentTitle,
-                updatedAt: Date.now()
-            });
-        } catch (error) {
-            console.error('Failed to save note content:', error);
-            showLinkError('Could not save note changes.');
-        }
+        scheduleNoteSave({ id: activeNote.id, content, title: currentTitle });
+        if (saveImmediately) flushPendingSave();
     };
 
     const handleCreateNote = async () => {
@@ -432,8 +463,8 @@ export default function RichTextEditor() {
                             contentEditable={true}
                             onPaste={handlePaste}
                             onClick={handleEditorClick}
-                            onInput={saveContent}
-                            onBlur={saveContent}
+                            onInput={() => saveContent()}
+                            onBlur={() => saveContent(true)}
                             className="flex-1 outline-none bg-background dark:bg-black text-foreground leading-relaxed text-base selection:bg-blue-100 dark:selection:bg-blue-700 dark:selection:text-white min-h-100"
                             data-placeholder="Start typing your note here..."
                         />
