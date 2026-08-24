@@ -2,7 +2,12 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { Bold, Italic, Link, Link2Off, Underline, Strikethrough, List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText } from 'lucide-react';
+import { 
+    Bold, Italic, Link, Link2Off, Underline, Strikethrough, 
+    List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText, 
+    AlignLeft, AlignCenter, AlignRight, AlignJustify, 
+    Palette, Highlighter, Code 
+} from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateNote, updateNoteTitle, addNote } from '@/store/slices/notesSlice';
 import { createNote, db, getCurrentTimestamp } from '@/services/databaseService';
@@ -17,7 +22,7 @@ const escapeHtml = (value: string) => value
 
 const sanitizeNoteHtml = (html: string) => DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|data:image\/(?:gif|jpeg|png|webp);)/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|data:image\/(?:gif|jpe?g|png|webp|bmp|svg\+xml);)/i,
 });
 
 const renderInlineMarkdown = (value: string) => {
@@ -95,33 +100,49 @@ const markdownToHtml = (markdown: string) => {
     return html.join('');
 };
 
-const ToolbarButton = ({ onMouseDown, title, children, className = '' }: {
+const ToolbarButton = ({ onMouseDown, title, children, className = '', active = false }: {
     onMouseDown: (e: React.MouseEvent) => void;
     title: string;
     children: React.ReactNode;
     className?: string;
+    active?: boolean;
 }) => (
     <button
         onMouseDown={onMouseDown}
         title={title}
-        className={`p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-all cursor-pointer ${className}`}
+        className={`p-2 rounded-lg transition-all cursor-pointer ${active ? 'bg-blue-50 text-blue-600' : 'text-muted-foreground hover:text-foreground hover:bg-accent'} ${className}`}
     >
         {children}
     </button>
 );
 
-const ToolbarDivider = () => <div className="w-px h-5 bg-gray-200 mx-1.5" />;
+const ToolbarDivider = () => <div className="w-px h-5 bg-gray-200 mx-1.5 shrink-0" />;
+
+// Helper to convert rgb(x,y,z) to #hex for native color inputs
+const rgbToHex = (rgb: string) => {
+    if (!rgb) return '';
+    if (rgb.startsWith('#')) return rgb;
+    const match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    if (!match) return '#000000';
+    return '#' + [1, 2, 3].map(i => parseInt(match[i]).toString(16).padStart(2, '0')).join('');
+};
 
 export default function RichTextEditor() {
     const editorRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const linkSelectionRef = useRef<Range | null>(null);
+    const savedSelectionRef = useRef<Range | null>(null); 
     const dispatch = useAppDispatch();
+    
     const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
     const [linkUrl, setLinkUrl] = useState('');
     const [isEditingLink, setIsEditingLink] = useState(false);
     const linkElementRef = useRef<HTMLAnchorElement | null>(null);
+    const imageElementRef = useRef<HTMLImageElement | null>(null);
     const imageSelectionRef = useRef<Range | null>(null);
+    
+    const [activeFormats, setActiveFormats] = useState<Record<string, any>>({});
+    
     const [toast, setToast] = useState<{ type: ToastType; message: string; visible: boolean }>({
         type: 'error',
         message: '',
@@ -172,6 +193,50 @@ export default function RichTextEditor() {
         saveTimerRef.current = setTimeout(flushPendingSave, 300);
     }, [flushPendingSave]);
 
+    // Track active formatting (Bold, Italic, Colors, Size, etc.) when selection changes
+    useEffect(() => {
+        const handleSelectionChange = () => {
+            const selection = window.getSelection();
+            if (!selection || !editorRef.current) return;
+            
+            if (!editorRef.current.contains(selection.anchorNode)) return;
+            
+            // Find current block element for formatBlock active state
+            let parentElement = selection.anchorNode?.parentElement;
+            let blockTag = 'p';
+            let currentFontSize = '';
+            
+            while (parentElement && parentElement !== editorRef.current) {
+                if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE'].includes(parentElement.tagName)) {
+                    blockTag = parentElement.tagName.toLowerCase();
+                }
+                if (!currentFontSize && parentElement.style.fontSize) currentFontSize = parentElement.style.fontSize;
+                parentElement = parentElement.parentElement;
+            }
+
+            const qForeColor = document.queryCommandValue('foreColor');
+            const qHiliteColor = document.queryCommandValue('hiliteColor') || document.queryCommandValue('backColor');
+            
+            setActiveFormats({
+                bold: document.queryCommandState('bold'),
+                italic: document.queryCommandState('italic'),
+                underline: document.queryCommandState('underline'),
+                strikeThrough: document.queryCommandState('strikeThrough'),
+                insertUnorderedList: document.queryCommandState('insertUnorderedList'),
+                insertOrderedList: document.queryCommandState('insertOrderedList'),
+                justifyLeft: document.queryCommandState('justifyLeft'),
+                justifyCenter: document.queryCommandState('justifyCenter'),
+                justifyRight: document.queryCommandState('justifyRight'),
+                justifyFull: document.queryCommandState('justifyFull'),
+                formatBlock: blockTag,
+                fontSize: currentFontSize,
+                foreColor: qForeColor ? rgbToHex(qForeColor) : '#000000',
+                hiliteColor: qHiliteColor && qHiliteColor !== 'transparent' ? rgbToHex(qHiliteColor) : '#ffff00'
+            });
+        };
+        document.addEventListener('selectionchange', handleSelectionChange);
+        return () => document.removeEventListener('selectionchange', handleSelectionChange);
+    }, []);
 
     useEffect(() => {
         if (pendingSaveRef.current && pendingSaveRef.current.id !== activeNoteId) {
@@ -210,7 +275,6 @@ export default function RichTextEditor() {
 
     const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key !== 'Enter') return;
-
         e.preventDefault();
         editorRef.current?.focus();
     };
@@ -221,19 +285,110 @@ export default function RichTextEditor() {
         saveContent();
     };
 
-
     const handleToolbarMouseDown = (e: React.MouseEvent, command: string, value?: string) => {
         e.preventDefault();
         formatText(command, value);
+    };
+
+    // --- Selection Helpers for Dropdowns & Color Pickers ---
+    const saveSelection = () => {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
+            savedSelectionRef.current = selection.getRangeAt(0).cloneRange();
+        }
+    };
+
+    const restoreSelection = () => {
+        const selection = window.getSelection();
+        if (savedSelectionRef.current && selection) {
+            selection.removeAllRanges();
+            selection.addRange(savedSelectionRef.current);
+        }
+    };
+
+    const applyColor = (command: 'foreColor' | 'hiliteColor', value: string) => {
+        editorRef.current?.focus();
+        restoreSelection();
+        document.execCommand('styleWithCSS', false, 'true');
+        document.execCommand(command, false, value);
+        saveContent();
+    };
+
+    const applyFormatBlock = (tag: string) => {
+        editorRef.current?.focus();
+        restoreSelection();
+        document.execCommand('formatBlock', false, `<${tag}>`);
+        saveContent();
+    };
+
+    const applyFontSize = (size: string) => {
+        editorRef.current?.focus();
+        restoreSelection();
+        // Force standard <font> tags behind the scenes for 100% browser compatibility
+        document.execCommand('styleWithCSS', false, 'false');
+        document.execCommand('fontSize', false, '7');
+        if (editorRef.current) {
+            const fontElements = editorRef.current.querySelectorAll('font[size="7"]');
+            fontElements.forEach(font => {
+                const span = document.createElement('span');
+                span.style.fontSize = size;
+                while (font.childNodes.length > 0) {
+                    span.appendChild(font.childNodes[0]);
+                }
+                font.parentNode?.replaceChild(span, font);
+            });
+        }
+        saveContent();
+    };
+
+    // Helper to wrap selected text in a custom HTML tag (like <code>)
+    const wrapSelectionWithHtml = (tag: string) => {
+        editorRef.current?.focus();
+        restoreSelection();
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+        const range = selection.getRangeAt(0);
+        if (range.collapsed) return;
+        const element = document.createElement(tag);
+        element.appendChild(range.extractContents());
+        range.insertNode(element);
+        selection.removeAllRanges();
+        const newRange = document.createRange();
+        newRange.selectNodeContents(element);
+        selection.addRange(newRange);
+        saveContent();
+    };
+
+    const findLinkFromNode = (node: Node | null | undefined) => {
+        const element = node instanceof Element ? node : node?.parentElement;
+        return element?.closest('a') as HTMLAnchorElement | null;
+    };
+
+    const findImageFromRange = (range: Range | null) => {
+        if (!range) return null;
+        const nodes = [range.startContainer, range.endContainer, range.commonAncestorContainer];
+        for (const node of nodes) {
+            if (node instanceof HTMLImageElement) return node;
+            if (node.parentElement instanceof HTMLImageElement) return node.parentElement;
+        }
+        if (range.startContainer instanceof Element) {
+            const selectedNode = range.startContainer.childNodes[range.startOffset];
+            if (selectedNode instanceof HTMLImageElement) return selectedNode;
+        }
+        return null;
     };
 
     const handleLinkMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        const anchor = range?.commonAncestorContainer.parentElement?.closest('a');
+        const anchor = findLinkFromNode(range?.startContainer)
+            || findLinkFromNode(range?.endContainer)
+            || findLinkFromNode(range?.commonAncestorContainer);
+        const image = findImageFromRange(range);
         linkSelectionRef.current = range ? range.cloneRange() : null;
         linkElementRef.current = anchor ?? null;
+        imageElementRef.current = image;
         setIsEditingLink(Boolean(anchor));
         setLinkUrl(anchor?.getAttribute('href') || '');
         setIsLinkDialogOpen(true);
@@ -272,6 +427,14 @@ export default function RichTextEditor() {
             linkElementRef.current.href = parsedUrl.href;
             linkElementRef.current.target = '_blank';
             linkElementRef.current.rel = 'noopener noreferrer';
+        } else if (imageElementRef.current) {
+            const image = imageElementRef.current;
+            const imageLink = document.createElement('a');
+            imageLink.href = parsedUrl.href;
+            imageLink.target = '_blank';
+            imageLink.rel = 'noopener noreferrer';
+            image.replaceWith(imageLink);
+            imageLink.appendChild(image);
         } else if (!savedRange || savedRange.collapsed) {
             document.execCommand('insertHTML', false, `<a href="${parsedUrl.href}" target="_blank" rel="noopener noreferrer">${escapeHtml(parsedUrl.href)}</a>`);
         } else {
@@ -282,6 +445,7 @@ export default function RichTextEditor() {
         saveContent();
         linkSelectionRef.current = null;
         linkElementRef.current = null;
+        imageElementRef.current = null;
         setLinkUrl('');
         setIsEditingLink(false);
         setIsLinkDialogOpen(false);
@@ -305,6 +469,7 @@ export default function RichTextEditor() {
         saveContent();
         linkSelectionRef.current = null;
         linkElementRef.current = null;
+        imageElementRef.current = null;
         setLinkUrl('');
         setIsEditingLink(false);
         setIsLinkDialogOpen(false);
@@ -341,14 +506,53 @@ export default function RichTextEditor() {
         e.target.value = '';
     };
 
+    // Auto-detect pasted links & pasted images
     const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+        const imageItem = Array.from(e.clipboardData.items).find(item => item.type.startsWith('image/'));
+        if (imageItem) {
+            e.preventDefault();
+            const imageFile = imageItem.getAsFile();
+            if (!imageFile) return;
+
+            const selection = window.getSelection();
+            savedSelectionRef.current = selection && selection.rangeCount
+                ? selection.getRangeAt(0).cloneRange()
+                : null;
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                editorRef.current?.focus();
+                const savedSelection = savedSelectionRef.current;
+                if (savedSelection) {
+                    selection?.removeAllRanges();
+                    selection?.addRange(savedSelection);
+                }
+
+                const image = `<img src="${reader.result as string}" alt="Pasted image" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" />`;
+                document.execCommand('insertHTML', false, sanitizeNoteHtml(image));
+                saveContent();
+                savedSelectionRef.current = null;
+            };
+            reader.readAsDataURL(imageFile);
+            return;
+        }
+
         const text = e.clipboardData.getData('text/plain');
+        const html = e.clipboardData.getData('text/html');
         e.preventDefault();
-        if (/[#*_~\[\]\(\)]/.test(text)) {
+
+        if (/([#*_~\[\]\(\)])/.test(text) && !html) {
             document.execCommand('insertHTML', false, sanitizeNoteHtml(markdownToHtml(text)));
+        } else if (html) {
+            document.execCommand('insertHTML', false, sanitizeNoteHtml(html));
         } else {
-            const html = e.clipboardData.getData('text/html');
-            document.execCommand('insertHTML', false, sanitizeNoteHtml(html || escapeHtml(text)));
+            // Auto-link plain text URLs
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const escapedText = escapeHtml(text);
+            const linkedText = escapedText.replace(urlRegex, (url) => 
+                `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+            );
+            document.execCommand('insertHTML', false, linkedText);
         }
         saveContent();
     };
@@ -401,89 +605,140 @@ export default function RichTextEditor() {
         );
     }
 
-
     return (
         <>
             <style>{`
-                .editor-scroll::-webkit-scrollbar {
-                    width: 5px;
-                }
-                .editor-scroll::-webkit-scrollbar-track {
-                    background: transparent;
-                }
-                .editor-scroll::-webkit-scrollbar-thumb {
-                    background: #d1d5db;
-                    border-radius: 10px;
-                }
-                .editor-scroll::-webkit-scrollbar-thumb:hover {
-                    background: #9ca3af;
-                }
+                .editor-scroll::-webkit-scrollbar { width: 5px; }
+                .editor-scroll::-webkit-scrollbar-track { background: transparent; }
+                .editor-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
+                .editor-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+                .note-content code { background: #f1f5f9; padding: 0.125rem 0.25rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.875rem; }
+                .note-content h1 { font-size: 2rem; font-weight: 800; margin: 1rem 0; }
+                .note-content h2 { font-size: 1.5rem; font-weight: 700; margin: 1rem 0; }
+                .note-content h3 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0; }
+                .note-content blockquote { border-left: 4px solid #d1d5db; padding-left: 1rem; color: #6b7280; font-style: italic; margin: 1rem 0; }
             `}</style>
 
             <div className="flex flex-col w-full h-full bg-background overflow-hidden">
-
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card/90 backdrop-blur-xs shrink-0">
-                    <div className="flex items-center gap-0.5">
-
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'bold')}
-                            title="Bold (Ctrl+B)"
+                <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-card/90 backdrop-blur-xs shrink-0">
+                    <div className="flex flex-wrap items-center gap-0.5">
+                        
+                        {/* Text Style Dropdown */}
+                        <select
+                            value={activeFormats.formatBlock || 'p'}
+                            onMouseDown={saveSelection}
+                            onChange={(e) => applyFormatBlock(e.target.value)}
+                            className="h-8 mr-1 px-2 text-sm border border-border rounded-md bg-card text-foreground outline-none cursor-pointer"
+                            title="Text style"
                         >
+                            <option value="p">Normal</option>
+                            <option value="h1">Heading 1</option>
+                            <option value="h2">Heading 2</option>
+                            <option value="h3">Heading 3</option>
+                            <option value="blockquote">Quote</option>
+                        </select>
+
+                        {/* Font Size Dropdown */}
+                        <select
+                            value={activeFormats.fontSize || ''}
+                            onMouseDown={saveSelection}
+                            onChange={(e) => applyFontSize(e.target.value)}
+                            className="h-8 mr-1 px-2 text-sm border border-border rounded-md bg-card text-foreground outline-none cursor-pointer"
+                            title="Font size"
+                        >
+                            <option value="" disabled>Size</option>
+                            <option value="12px">12</option>
+                            <option value="14px">14</option>
+                            <option value="16px">16</option>
+                            <option value="18px">18</option>
+                            <option value="24px">24</option>
+                            <option value="32px">32</option>
+                            {/* Display current size if it doesn't match default options */}
+                            {activeFormats.fontSize && !['12px', '14px', '16px', '18px', '24px', '32px'].includes(activeFormats.fontSize) && (
+                                <option value={activeFormats.fontSize}>
+                                    {activeFormats.fontSize.replace('px', '')}
+                                </option>
+                            )}
+                        </select>
+
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'bold')} title="Bold (Ctrl+B)" active={activeFormats.bold}>
                             <Bold size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'italic')}
-                            title="Italic (Ctrl+I)"
-                        >
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'italic')} title="Italic (Ctrl+I)" active={activeFormats.italic}>
                             <Italic size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={handleLinkMouseDown}
-                            title="Insert link"
-                        >
-                            <Link size={16} strokeWidth={2.5} />
-                        </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'underline')}
-                            title="Underline (Ctrl+U)"
-                        >
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'underline')} title="Underline (Ctrl+U)" active={activeFormats.underline}>
                             <Underline size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'strikeThrough')}
-                            title="Strikethrough"
-                        >
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'strikeThrough')} title="Strikethrough" active={activeFormats.strikeThrough}>
                             <Strikethrough size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+                        <ToolbarButton onMouseDown={(e) => { e.preventDefault(); wrapSelectionWithHtml('code'); }} title="Inline Code">
+                            <Code size={16} strokeWidth={2.5} />
                         </ToolbarButton>
 
                         <ToolbarDivider />
 
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'insertUnorderedList')}
-                            title="Bullet list"
-                        >
+                        {/* Text Color */}
+                        <div className="relative flex items-center justify-center w-8 h-8 hover:bg-accent rounded-lg transition-all cursor-pointer" title="Text color">
+                            <Palette size={16} className="absolute pointer-events-none text-muted-foreground" />
+                            <input
+                                type="color"
+                                value={activeFormats.foreColor || '#000000'}
+                                onMouseDown={saveSelection}
+                                onChange={(e) => applyColor('foreColor', e.target.value)}
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                        </div>
+
+                        {/* Highlight Color */}
+                        <div className="relative flex items-center justify-center w-8 h-8 hover:bg-accent rounded-lg transition-all cursor-pointer" title="Highlight color">
+                            <Highlighter size={16} className="absolute pointer-events-none text-muted-foreground" />
+                            <input
+                                type="color"
+                                value={activeFormats.hiliteColor || '#ffff00'}
+                                onMouseDown={saveSelection}
+                                onChange={(e) => applyColor('hiliteColor', e.target.value)}
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                        </div>
+
+                        <ToolbarDivider />
+
+                        <ToolbarButton onMouseDown={handleLinkMouseDown} title="Insert link">
+                            <Link size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+
+                        <ToolbarDivider />
+
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyLeft')} title="Align left" active={activeFormats.justifyLeft}>
+                            <AlignLeft size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyCenter')} title="Align center" active={activeFormats.justifyCenter}>
+                            <AlignCenter size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyRight')} title="Align right" active={activeFormats.justifyRight}>
+                            <AlignRight size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyFull')} title="Justify" active={activeFormats.justifyFull}>
+                            <AlignJustify size={16} strokeWidth={2.5} />
+                        </ToolbarButton>
+
+                        <ToolbarDivider />
+
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'insertUnorderedList')} title="Bullet list" active={activeFormats.insertUnorderedList}>
                             <List size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'insertOrderedList')}
-                            title="Numbered list"
-                        >
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'insertOrderedList')} title="Numbered list" active={activeFormats.insertOrderedList}>
                             <ListOrdered size={16} strokeWidth={2.5} />
                         </ToolbarButton>
 
                         <ToolbarDivider />
 
-                        <ToolbarButton
-                            onMouseDown={(e) => handleToolbarMouseDown(e, 'insertHorizontalRule')}
-                            title="Divider"
-                        >
+                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'insertHorizontalRule')} title="Divider">
                             <Minus size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton
-                            onMouseDown={handleImageMouseDown}
-                            title="Insert image"
-                            className="hover:text-blue-600"
-                        >
+                        <ToolbarButton onMouseDown={handleImageMouseDown} title="Insert image" className="hover:text-blue-600">
                             <ImageIcon size={16} strokeWidth={2.5} />
                         </ToolbarButton>
                         <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
@@ -512,12 +767,13 @@ export default function RichTextEditor() {
                             onClick={handleEditorClick}
                             onInput={() => saveContent()}
                             onBlur={() => saveContent(true)}
-                            className="flex-1 outline-none bg-background dark:bg-black text-foreground leading-relaxed text-base selection:bg-blue-100 dark:selection:bg-blue-700 dark:selection:text-white min-h-100"
+                            className="note-content flex-1 outline-none bg-background dark:bg-black text-foreground leading-relaxed text-base selection:bg-blue-100 dark:selection:bg-blue-700 dark:selection:text-white min-h-100"
                             data-placeholder="Start typing your note here..."
                         />
                     </div>
                 </div>
             </div>
+
             {isLinkDialogOpen && (
                 <div className="fixed inset-0 z-90 flex items-center justify-center bg-black/30 px-4 backdrop-blur-xs">
                     <form onSubmit={handleLinkSubmit} className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
@@ -547,19 +803,19 @@ export default function RichTextEditor() {
                                 </button>
                             ) : <span />}
                             <div className="flex gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setIsLinkDialogOpen(false)}
-                                className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="submit"
-                                className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
-                            >
-                                {isEditingLink ? 'Save changes' : 'Add link'}
-                            </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsLinkDialogOpen(false)}
+                                    className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
+                                >
+                                    {isEditingLink ? 'Save changes' : 'Add link'}
+                                </button>
                             </div>
                         </div>
                     </form>
