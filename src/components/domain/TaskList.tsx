@@ -23,9 +23,7 @@ export default function TaskList({ tasks }: TaskListProps) {
     const [editingTitle, setEditingTitle] = useState('');
     const [isPanelOpen, setIsPanelOpen] = useState(false);
 
-    // Confirm dialog state
-    const [confirmOpen, setConfirmOpen] = useState(false);
-    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+    const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false);
 
     // Toast state
     const [toast, setToast] = useState<{ type: ToastType; message: string; visible: boolean }>({
@@ -77,39 +75,30 @@ export default function TaskList({ tasks }: TaskListProps) {
         if (e.key === 'Escape') { setEditingId(null); setEditingTitle(''); }
     };
 
-    const handleDeleteClick = (id: string) => {
-        setPendingDeleteId(id);
-        setConfirmOpen(true);
-    };
-
-    const handleDeleteConfirm = async () => {
-        if (!pendingDeleteId) return;
-        const taskToDelete = tasks.find(t => t.id === pendingDeleteId);
+    const handleDeleteClick = async (id: string) => {
+        const taskToDelete = tasks.find(t => t.id === id);
         if (!taskToDelete) return;
 
         const deletedAt = Date.now();
         try {
             await db.transaction('rw', db.tasks, db.deletedTasks, async () => {
                 await db.deletedTasks.add({ taskId: taskToDelete.id, task: taskToDelete, deletedAt });
-                await db.tasks.delete(pendingDeleteId);
+                await db.tasks.delete(id);
             });
             dispatch(addToUndoStack({ task: taskToDelete, deletedAt }));
-            dispatch(deleteTask(pendingDeleteId));
+            dispatch(deleteTask(id));
         } catch (error) {
             console.error('Failed to delete task:', error);
             showToast('error', 'Could not delete task');
             return;
         }
 
-        setConfirmOpen(false);
-        setPendingDeleteId(null);
         setIsPanelOpen(true);
         showToast('deleted', 'Task deleted');
     };
 
-    const handleDeleteCancel = () => {
-        setConfirmOpen(false);
-        setPendingDeleteId(null);
+    const handleClearAllClick = () => {
+        setClearAllConfirmOpen(true);
     };
 
     const handleRestore = async (deletedItem: DeletedTaskItem) => {
@@ -145,12 +134,13 @@ export default function TaskList({ tasks }: TaskListProps) {
         }
     };
 
-    const handleClearAll = async () => {
+    const handleClearAllConfirm = async () => {
         const taskIds = deletedTasks.map(d => d.task.id);
         try {
             await db.deletedTasks.bulkDelete(taskIds);
             dispatch(clearUndoStack());
             setIsPanelOpen(false);
+            setClearAllConfirmOpen(false);
         } catch (error) {
             console.error('Failed to clear deleted tasks:', error);
             showToast('error', 'Could not clear deleted tasks');
@@ -202,17 +192,17 @@ export default function TaskList({ tasks }: TaskListProps) {
                 items={deletedTasks}
                 onRestore={handleRestore}
                 onDismiss={handleDismiss}
-                onClearAll={handleClearAll}
+                onClearAll={handleClearAllClick}
             />
 
             <ConfirmDialog
-                open={confirmOpen}
-                title="Delete task?"
-                message="This task will be moved to the recovery panel until you permanently delete it."
-                confirmLabel="Delete"
+                open={clearAllConfirmOpen}
+                title="Clear deleted tasks?"
+                message="All deleted tasks will be permanently removed and cannot be restored."
+                confirmLabel="Clear all"
                 variant="danger"
-                onConfirm={handleDeleteConfirm}
-                onCancel={handleDeleteCancel}
+                onConfirm={handleClearAllConfirm}
+                onCancel={() => setClearAllConfirmOpen(false)}
             />
 
             <Toast

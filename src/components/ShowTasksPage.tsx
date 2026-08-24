@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import TaskList from '@/components/domain/TaskList';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -13,6 +13,8 @@ const MAX_TITLE_LENGTH = 120;
 export default function ShowTasksPage() {
     const dispatch = useAppDispatch();
     const tasks = useAppSelector((state) => state.tasks.items);
+    const [prioritySort, setPrioritySort] = useState<'default' | '1' | '2' | '3' | '4'>('default');
+    const [statusSort, setStatusSort] = useState<'default' | 'done' | 'pending' | 'in-progress'>('default');
     const [isAdding, setIsAdding] = useState(false);
     const [newTitle, setNewTitle] = useState('');
     const [newQuadrant, setNewQuadrant] = useState<1 | 2 | 3 | 4>(1);
@@ -29,6 +31,29 @@ export default function ShowTasksPage() {
     const handleToastDone = useCallback(() => {
         setToast(prev => ({ ...prev, visible: false }));
     }, []);
+
+    const sortedTasks = useMemo(() => {
+        if (prioritySort === 'default' && statusSort === 'default') return tasks;
+
+        return tasks
+            .map((task, index) => ({ task, index }))
+            .sort((left, right) => {
+                if (prioritySort !== 'default') {
+                    const leftPriorityMatch = String(left.task.quadrant) === prioritySort;
+                    const rightPriorityMatch = String(right.task.quadrant) === prioritySort;
+                    const priorityDifference = Number(rightPriorityMatch) - Number(leftPriorityMatch);
+                    if (priorityDifference !== 0) return priorityDifference;
+                }
+
+                if (statusSort !== 'default') {
+                    const statusDifference = Number(right.task.status === statusSort) - Number(left.task.status === statusSort);
+                    if (statusDifference !== 0) return statusDifference;
+                }
+
+                return left.index - right.index;
+            })
+            .map(({ task }) => task);
+    }, [prioritySort, statusSort, tasks]);
 
     const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -123,8 +148,39 @@ export default function ShowTasksPage() {
                     </form>
                 )}
 
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                        <span>Priority</span>
+                        <select
+                            value={prioritySort}
+                            onChange={(e) => setPrioritySort(e.target.value as 'default' | '1' | '2' | '3' | '4')}
+                            className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground outline-none cursor-pointer"
+                        >
+                            <option value="default">Default</option>
+                            <option value="1">P1</option>
+                            <option value="2">P2</option>
+                            <option value="3">P3</option>
+                            <option value="4">P4</option>
+                        </select>
+                    </label>
 
-                <TaskList tasks={tasks} />
+                    <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                        <span>Status</span>
+                        <select
+                            value={statusSort}
+                            onChange={(e) => setStatusSort(e.target.value as 'default' | 'done' | 'pending' | 'in-progress')}
+                            className="rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium text-foreground outline-none cursor-pointer"
+                        >
+                            <option value="default">Default</option>
+                            <option value="done">Done</option>
+                            <option value="pending">Pending</option>
+                            <option value="in-progress">In Progress</option>
+                        </select>
+                    </label>
+                </div>
+
+
+                <TaskList tasks={sortedTasks} />
             </div>
             <Toast
                 type={toast.type}

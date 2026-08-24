@@ -206,7 +206,7 @@ export default function MatrixQuadrant({
     },
     2: {
       bg: "bg-card",
-      border: "border-blue-300 hover:border-blue-400 ring-1 ring-blue-100",
+      border: "border-rose-200/80 hover:border-rose-300",
       qColor: "text-blue-600",
       badge: "bg-blue-50 text-blue-700 font-semibold dark:bg-blue-950/50 dark:text-blue-200",
       dot: "bg-blue-600",
@@ -214,7 +214,7 @@ export default function MatrixQuadrant({
     },
     3: {
       bg: "bg-card",
-      border: "border-amber-200/80 hover:border-amber-300",
+      border: "border-rose-200/80 hover:border-rose-300",
       qColor: "text-amber-600",
       badge: "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-200",
       dot: "bg-amber-500",
@@ -222,7 +222,7 @@ export default function MatrixQuadrant({
     },
     4: {
       bg: "bg-card",
-      border: "border-slate-200 hover:border-slate-300",
+      border: "border-rose-200/80 hover:border-rose-300",
       qColor: "text-slate-500",
       badge: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200",
       dot: "bg-slate-400",
