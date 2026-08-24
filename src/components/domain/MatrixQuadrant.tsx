@@ -12,7 +12,6 @@ import {
   addToUndoStack,
 } from "@/store/slices/tasksSlice";
 import { createTask, db } from "@/services/databaseService";
-import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Toast, { ToastType } from "@/components/ui/Toast";
 import MatrixTaskCard from "@/components/domain/MatrixTaskCard";
 import NewMatrixTask from "@/components/domain/NewMatrixTask";
@@ -42,10 +41,6 @@ export default function MatrixQuadrant({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
-
-  // Confirm dialog state
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   // Toast state
   const [toast, setToast] = useState<{
@@ -128,14 +123,8 @@ export default function MatrixQuadrant({
     if (e.key === "Escape") handleCancelEdit();
   };
 
-  const handleDeleteClick = (id: string) => {
-    setPendingDeleteId(id);
-    setConfirmOpen(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!pendingDeleteId) return;
-    const taskToDelete = allTasks.find((t) => t.id === pendingDeleteId);
+  const handleDeleteClick = async (id: string) => {
+    const taskToDelete = allTasks.find((t) => t.id === id);
     if (!taskToDelete) return;
 
     const deletedAt = Date.now();
@@ -146,24 +135,17 @@ export default function MatrixQuadrant({
           task: taskToDelete,
           deletedAt,
         });
-        await db.tasks.delete(pendingDeleteId);
+        await db.tasks.delete(id);
       });
       dispatch(addToUndoStack({ task: taskToDelete, deletedAt }));
-      dispatch(deleteTask(pendingDeleteId));
+      dispatch(deleteTask(id));
     } catch (error) {
       console.error("Failed to delete task:", error);
       showToast("error", "Could not delete task");
       return;
     }
 
-    setConfirmOpen(false);
-    setPendingDeleteId(null);
     showToast("deleted", "Task deleted");
-  };
-
-  const handleDeleteCancel = () => {
-    setConfirmOpen(false);
-    setPendingDeleteId(null);
   };
 
   const handleToggleStatus = async (id: string, currentStatus: string) => {
@@ -329,16 +311,6 @@ export default function MatrixQuadrant({
 
         </div>
       </div>
-
-      <ConfirmDialog
-        open={confirmOpen}
-        title="Delete task?"
-        message="This task will be moved to the recovery panel until you permanently delete it."
-        confirmLabel="Delete"
-        variant="danger"
-        onConfirm={handleDeleteConfirm}
-        onCancel={handleDeleteCancel}
-      />
 
       <Toast
         type={toast.type}
