@@ -186,6 +186,7 @@
 
 [contenteditable] a {
   color: oklch(0.62 0.19 250);
+  cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
 }

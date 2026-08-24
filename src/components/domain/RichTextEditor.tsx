@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback } from 'react';
 import DOMPurify from 'dompurify';
-import { Bold, Italic, Link, Underline, Strikethrough, List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText } from 'lucide-react';
+import { Bold, Italic, Link, Link2Off, Underline, Strikethrough, List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateNote, updateNoteTitle, addNote } from '@/store/slices/notesSlice';
 import { createNote, db, getCurrentTimestamp } from '@/services/databaseService';
@@ -119,6 +119,9 @@ export default function RichTextEditor() {
     const dispatch = useAppDispatch();
     const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
     const [linkUrl, setLinkUrl] = useState('');
+    const [isEditingLink, setIsEditingLink] = useState(false);
+    const linkElementRef = useRef<HTMLAnchorElement | null>(null);
+    const imageSelectionRef = useRef<Range | null>(null);
     const [toast, setToast] = useState<{ type: ToastType; message: string; visible: boolean }>({
         type: 'error',
         message: '',
@@ -227,8 +230,12 @@ export default function RichTextEditor() {
     const handleLinkMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
         const selection = window.getSelection();
-        linkSelectionRef.current = selection && !selection.isCollapsed ? selection.getRangeAt(0).cloneRange() : null;
-        setLinkUrl('');
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const anchor = range?.commonAncestorContainer.parentElement?.closest('a');
+        linkSelectionRef.current = range ? range.cloneRange() : null;
+        linkElementRef.current = anchor ?? null;
+        setIsEditingLink(Boolean(anchor));
+        setLinkUrl(anchor?.getAttribute('href') || '');
         setIsLinkDialogOpen(true);
     };
 
@@ -261,7 +268,11 @@ export default function RichTextEditor() {
             selection?.addRange(savedRange);
         }
 
-        if (!savedRange || savedRange.collapsed) {
+        if (linkElementRef.current) {
+            linkElementRef.current.href = parsedUrl.href;
+            linkElementRef.current.target = '_blank';
+            linkElementRef.current.rel = 'noopener noreferrer';
+        } else if (!savedRange || savedRange.collapsed) {
             document.execCommand('insertHTML', false, `<a href="${parsedUrl.href}" target="_blank" rel="noopener noreferrer">${escapeHtml(parsedUrl.href)}</a>`);
         } else {
             document.execCommand('createLink', false, parsedUrl.href);
@@ -270,12 +281,41 @@ export default function RichTextEditor() {
         editorRef.current?.focus();
         saveContent();
         linkSelectionRef.current = null;
+        linkElementRef.current = null;
         setLinkUrl('');
+        setIsEditingLink(false);
+        setIsLinkDialogOpen(false);
+    };
+
+    const handleRemoveLink = () => {
+        const anchor = linkElementRef.current;
+        if (anchor) {
+            anchor.replaceWith(...Array.from(anchor.childNodes));
+        } else {
+            const selection = window.getSelection();
+            const savedRange = linkSelectionRef.current;
+            if (savedRange) {
+                selection?.removeAllRanges();
+                selection?.addRange(savedRange);
+            }
+            document.execCommand('unlink');
+        }
+
+        editorRef.current?.focus();
+        saveContent();
+        linkSelectionRef.current = null;
+        linkElementRef.current = null;
+        setLinkUrl('');
+        setIsEditingLink(false);
         setIsLinkDialogOpen(false);
     };
 
     const handleImageMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
+        const selection = window.getSelection();
+        imageSelectionRef.current = selection && selection.rangeCount
+            ? selection.getRangeAt(0).cloneRange()
+            : null;
         fileInputRef.current?.click();
     };
 
@@ -287,8 +327,15 @@ export default function RichTextEditor() {
         reader.onload = () => {
             const base64Image = reader.result as string;
             const imgHtml = `<img src="${base64Image}" style="max-width: 100%; border-radius: 8px; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" />`;
+            const selection = window.getSelection();
+            const savedRange = imageSelectionRef.current;
+            if (savedRange) {
+                selection?.removeAllRanges();
+                selection?.addRange(savedRange);
+            }
             document.execCommand('insertHTML', false, imgHtml);
             saveContent();
+            imageSelectionRef.current = null;
         };
         reader.readAsDataURL(file);
         e.target.value = '';
@@ -475,7 +522,7 @@ export default function RichTextEditor() {
                 <div className="fixed inset-0 z-90 flex items-center justify-center bg-black/30 px-4 backdrop-blur-xs">
                     <form onSubmit={handleLinkSubmit} className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
                         <div className="mb-4">
-                            <h2 className="text-base font-semibold text-foreground">Add link</h2>
+                            <h2 className="text-base font-semibold text-foreground">{isEditingLink ? 'Edit link' : 'Add link'}</h2>
                             <p className="mt-1 text-sm text-muted-foreground">Enter the web or email address for this text.</p>
                         </div>
                         <label htmlFor="note-link-url" className="mb-1.5 block text-sm font-medium text-foreground">URL</label>
@@ -488,7 +535,18 @@ export default function RichTextEditor() {
                             autoFocus
                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                         />
-                        <div className="mt-5 flex justify-end gap-2">
+                        <div className="mt-5 flex items-center justify-between gap-2">
+                            {isEditingLink ? (
+                                <button
+                                    type="button"
+                                    onClick={handleRemoveLink}
+                                    className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
+                                >
+                                    <Link2Off size={15} />
+                                    <span>Remove link</span>
+                                </button>
+                            ) : <span />}
+                            <div className="flex gap-2">
                             <button
                                 type="button"
                                 onClick={() => setIsLinkDialogOpen(false)}
@@ -500,8 +558,9 @@ export default function RichTextEditor() {
                                 type="submit"
                                 className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-700"
                             >
-                                Add link
+                                {isEditingLink ? 'Save changes' : 'Add link'}
                             </button>
+                            </div>
                         </div>
                     </form>
                 </div>
