@@ -131,7 +131,8 @@ export default function ShowNotesPage() {
 
         return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     };
-       // --- PROFESSIONAL PDF EXPORT FUNCTIONALITY ---
+    
+    // --- PROFESSIONAL PDF EXPORT FUNCTIONALITY ---
     const handleExportNote = async () => {
         if (!activeNoteId) {
             showToast('error', 'No note selected to export');
@@ -171,56 +172,73 @@ export default function ShowNotesPage() {
             const title = activeNote.title || 'Untitled Note';
             const content = activeNote.content || '';
 
-           
             const parser = new DOMParser();
             const doc = parser.parseFromString(content, 'text/html');
             const images = doc.querySelectorAll('img');
             
-            
             const maxPdfWidthPt = 515;
 
-            // Wait for all images to be measured
-            await Promise.all(Array.from(images).map((img) => {
-                return new Promise<void>((resolve) => {
-                    const src = img.getAttribute('src');
-                    if (!src) return resolve();
+            // Wait for all images to be fetched, converted to JPEG via canvas, and measured
+            await Promise.all(Array.from(images).map(async (img) => {
+                const originalSrc = img.getAttribute('src');
+                if (!originalSrc) return;
 
-                    // 1. Check if the image has an explicit width in its style (e.g., width: 300px)
-                    const styleWidth = img.getAttribute('style') || '';
-                    const widthMatch = styleWidth.match(/width:\s*(\d+)px/i);
-                    
-                    if (widthMatch && widthMatch[1]) {
-                        let widthPt = parseInt(widthMatch[1], 10) * 0.75; 
-                        if (widthPt > maxPdfWidthPt) widthPt = maxPdfWidthPt; // Cap to page width
-                        img.setAttribute('width', String(Math.round(widthPt)));
-                        img.removeAttribute('height');
-                        img.removeAttribute('style');
-                        return resolve();
+                try {
+                    let imageSrcToLoad = originalSrc;
+
+                    // Fetch HTTP images as a Blob first to avoid some tainted canvas issues
+                    if (originalSrc.startsWith('http')) {
+                        const response = await fetch(originalSrc);
+                        if (!response.ok) throw new Error('Failed to fetch external image');
+                        const blob = await response.blob();
+                        imageSrcToLoad = URL.createObjectURL(blob);
                     }
 
-                    // 2. If no explicit width, load image to get its natural width
-                    const tempImg = new Image();
-                    tempImg.onload = () => {
-                        const naturalPx = tempImg.naturalWidth || 500;
-                        let widthPt = naturalPx * 0.75; 
+                    await new Promise<void>((resolve, reject) => {
+                        const tempImg = new Image();
+                        tempImg.onload = () => {
+                            try {
+                                // Draw on canvas and export as JPEG (Forcing pdfmake compatibility)
+                                const canvas = document.createElement('canvas');
+                                canvas.width = tempImg.naturalWidth;
+                                canvas.height = tempImg.naturalHeight;
+                                const ctx = canvas.getContext('2d');
+                                
+                                if (ctx) {
+                                    ctx.fillStyle = '#FFFFFF'; // Fill white for transparent images (since JPEG doesn't support transparency)
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                    ctx.drawImage(tempImg, 0, 0);
+                                    
+                                    const jpegBase64 = canvas.toDataURL('image/jpeg', 0.9);
+                                    img.setAttribute('src', jpegBase64);
+                                }
+
+                                // Handle PDF sizing
+                                const styleWidth = img.getAttribute('style') || '';
+                                const widthMatch = styleWidth.match(/width:\s*(\d+)px/i);
+                                
+                                let widthPt = widthMatch && widthMatch[1] 
+                                    ? parseInt(widthMatch[1], 10) * 0.75 
+                                    : tempImg.naturalWidth * 0.75;
+                                
+                                if (widthPt > maxPdfWidthPt) widthPt = maxPdfWidthPt; // Cap to page width
+                                
+                                img.setAttribute('width', String(Math.round(widthPt)));
+                                img.removeAttribute('height');
+                                img.removeAttribute('style');
+                                resolve();
+                            } catch (err) {
+                                reject(err);
+                            }
+                        };
                         
-                        // Cap to max width if it's larger than the page
-                        if (widthPt > maxPdfWidthPt) widthPt = maxPdfWidthPt;
-                        
-                        img.setAttribute('width', String(Math.round(widthPt)));
-                        img.removeAttribute('height');
-                        img.removeAttribute('style');
-                        resolve();
-                    };
-                    tempImg.onerror = () => {
-                        // Fallback if image fails to load
-                        img.setAttribute('width', '500');
-                        img.removeAttribute('height');
-                        img.removeAttribute('style');
-                        resolve();
-                    };
-                    tempImg.src = src;
-                });
+                        tempImg.onerror = () => reject(new Error('Image load error'));
+                        tempImg.src = imageSrcToLoad;
+                    });
+                } catch (error) {
+                    console.warn(`Failed to process image format: ${originalSrc}. Removing to prevent PDF crash.`, error);
+                    img.remove(); // Remove failing images safely
+                }
             }));
 
             const sanitizedContent = doc.body.innerHTML;
@@ -271,6 +289,7 @@ export default function ShowNotesPage() {
             setIsExporting(false);
         }
     };
+    
     return (
         <div className="flex h-full w-full bg-background overflow-hidden">
 
