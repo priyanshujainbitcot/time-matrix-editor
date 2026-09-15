@@ -15,7 +15,7 @@ export default function Header() {
     ];
 
     return (
-        <header className="flex items-center justify-between px-8 py-4 bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <header className="flex items-center justify-between px-8 py-4 bg-card border-b border-border sticky top-0 z-50 shadow-sm">
 
             <div className="text-2xl font-extrabold tracking-tight text-foreground">
                 <Link href="/notes"><span className="text-blue-600">T</span><span className="text-blue-600">N</span>Matrix</Link>
@@ -32,7 +32,7 @@ export default function Header() {
                             href={item.path}
                             className={`text-sm font-semibold tracking-wide pb-1 transition-colors border-b-2 ${isActive
                                 ? 'border-blue-600 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300'
+                                : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/40'
                                 }`}
                         >
                             {item.label}

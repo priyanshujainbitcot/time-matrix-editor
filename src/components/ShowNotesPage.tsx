@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Plus, Trash2, FileText, FileDown, Loader2 } from 'lucide-react';
 import RichTextEditor from '@/components/domain/RichTextEditor';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setNotes, addNote, setActiveNote, deleteNote } from '@/store/slices/notesSlice';
 import { createNote, db } from '@/services/databaseService';
+import { notifyNotesChanged, onNotesChanged } from '@/services/crossTabSync';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Toast, { ToastType } from '@/components/ui/Toast';
 import type { TVirtualFileSystem } from 'pdfmake/interfaces';
@@ -30,6 +31,8 @@ export default function ShowNotesPage() {
     const dispatch = useAppDispatch();
     const notes = useAppSelector(state => state.notes.items);
     const activeNoteId = useAppSelector(state => state.notes.activeNoteId);
+    const activeNoteIdRef = useRef(activeNoteId);
+    activeNoteIdRef.current = activeNoteId;
 
     // Confirm dialog state
     const [confirmOpen, setConfirmOpen] = useState(false);
@@ -60,9 +63,10 @@ export default function ShowNotesPage() {
                 const savedNotes = await db.notes.orderBy('updatedAt').reverse().toArray();
                 dispatch(setNotes(savedNotes));
                 if (savedNotes.length > 0) {
-                    const activeNoteStillExists = activeNoteId
-                        && savedNotes.some(note => note.id === activeNoteId);
-                    dispatch(setActiveNote(activeNoteStillExists ? activeNoteId : savedNotes[0].id));
+                    const currentActiveId = activeNoteIdRef.current;
+                    const activeNoteStillExists = currentActiveId
+                        && savedNotes.some(note => note.id === currentActiveId);
+                    dispatch(setActiveNote(activeNoteStillExists ? currentActiveId : savedNotes[0].id));
                 } else {
                     dispatch(setActiveNote(null));
                 }
@@ -72,12 +76,30 @@ export default function ShowNotesPage() {
             }
         };
         loadNotes();
-    }, [activeNoteId, dispatch, showToast]);
+    }, [dispatch, showToast]);
+
+    // Cross-tab sync: re-fetch notes when another tab modifies data
+    useEffect(() => {
+        return onNotesChanged(async () => {
+            try {
+                const savedNotes = await db.notes.orderBy('updatedAt').reverse().toArray();
+                dispatch(setNotes(savedNotes));
+                // If the currently active note was deleted in another tab, select the first available
+                const currentActiveId = activeNoteIdRef.current;
+                if (currentActiveId && !savedNotes.some(n => n.id === currentActiveId)) {
+                    dispatch(setActiveNote(savedNotes.length > 0 ? savedNotes[0].id : null));
+                }
+            } catch (error) {
+                console.error('Failed to sync notes from other tab:', error);
+            }
+        });
+    }, [dispatch]);
 
     const handleCreateNote = async () => {
         try {
             const newNote = await createNote();
             dispatch(addNote(newNote));
+            notifyNotesChanged();
         } catch (error) {
             console.error('Failed to create note:', error);
             showToast('error', 'Could not create note');
@@ -97,6 +119,7 @@ export default function ShowNotesPage() {
         try {
             await db.notes.delete(pendingDeleteId);
             dispatch(deleteNote(pendingDeleteId));
+            notifyNotesChanged();
         } catch (error) {
             console.error('Failed to delete note:', error);
             showToast('error', 'Could not delete note');

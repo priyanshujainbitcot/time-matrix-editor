@@ -4,14 +4,15 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import { 
     Bold, Italic, Link, Link2Off, Underline, Strikethrough, 
-    List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText, 
-    AlignLeft, AlignCenter, AlignRight, AlignJustify, 
-    Palette, Highlighter, Code 
+    List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText,
+    AlignLeft, AlignCenter, AlignRight, Eraser,
+    Palette, Highlighter 
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { updateNote, updateNoteTitle, addNote } from '@/store/slices/notesSlice';
 import { createNote, db, getCurrentTimestamp } from '@/services/databaseService';
 import Toast, { ToastType } from '@/components/ui/Toast';
+import { notifyNotesChanged } from '@/services/crossTabSync';
 
 const escapeHtml = (value: string) => value
     .replace(/&/g, '&amp;')
@@ -39,7 +40,6 @@ const renderInlineMarkdown = (value: string) => {
     });
 
     rendered = rendered
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
         .replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>')
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/__([^_]+)__/g, '<strong>$1</strong>')
@@ -54,6 +54,9 @@ const markdownToHtml = (markdown: string) => {
     const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
     const html: string[] = [];
     let listType: 'ul' | 'ol' | null = null;
+    let inCodeBlock = false;
+    let codeLines: string[] = [];
+    let codeLang = '';
 
     const closeList = () => {
         if (listType) {
@@ -62,7 +65,37 @@ const markdownToHtml = (markdown: string) => {
         }
     };
 
+    const closeCodeBlock = () => {
+        if (inCodeBlock) {
+            const langAttr = codeLang ? ` class="language-${escapeHtml(codeLang)}"` : '';
+            html.push(`<pre><code${langAttr}>${codeLines.join('\n')}</code></pre>`);
+            inCodeBlock = false;
+            codeLines = [];
+            codeLang = '';
+        }
+    };
+
     lines.forEach(line => {
+        // Handle fenced code block boundaries (``` or ~~~)
+        const fenceMatch = line.match(/^(`{3,}|~{3,})(\w*)\s*$/);
+        if (fenceMatch) {
+            if (!inCodeBlock) {
+                closeList();
+                inCodeBlock = true;
+                codeLang = fenceMatch[2] || '';
+                codeLines = [];
+            } else {
+                closeCodeBlock();
+            }
+            return;
+        }
+
+        // Accumulate lines inside a fenced code block (no inline processing)
+        if (inCodeBlock) {
+            codeLines.push(escapeHtml(line));
+            return;
+        }
+
         const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
         const unorderedItem = line.match(/^\s*[-*+]\s+(.+)$/);
         const orderedItem = line.match(/^\s*\d+[.)]\s+(.+)$/);
@@ -96,6 +129,8 @@ const markdownToHtml = (markdown: string) => {
         }
     });
 
+    // Close any unclosed fenced code block (graceful fallback)
+    closeCodeBlock();
     closeList();
     return html.join('');
 };
@@ -169,6 +204,7 @@ export default function RichTextEditor() {
                         title: note.title,
                         updatedAt: getCurrentTimestamp(),
                     });
+                    notifyNotesChanged();
                 } catch (error) {
                     console.error('Failed to save note changes:', error);
                     showLinkError('Could not save note changes.');
@@ -217,6 +253,17 @@ export default function RichTextEditor() {
             const qForeColor = document.queryCommandValue('foreColor');
             const qHiliteColor = document.queryCommandValue('hiliteColor') || document.queryCommandValue('backColor');
             
+            // Determine alignment from computed style of the current block element
+            let alignElement = selection.anchorNode?.parentElement;
+            let textAlign = '';
+            while (alignElement && alignElement !== editorRef.current) {
+                if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'DIV'].includes(alignElement.tagName)) {
+                    textAlign = window.getComputedStyle(alignElement).textAlign;
+                    if (textAlign) break;
+                }
+                alignElement = alignElement.parentElement;
+            }
+
             setActiveFormats({
                 bold: document.queryCommandState('bold'),
                 italic: document.queryCommandState('italic'),
@@ -224,10 +271,9 @@ export default function RichTextEditor() {
                 strikeThrough: document.queryCommandState('strikeThrough'),
                 insertUnorderedList: document.queryCommandState('insertUnorderedList'),
                 insertOrderedList: document.queryCommandState('insertOrderedList'),
-                justifyLeft: document.queryCommandState('justifyLeft'),
-                justifyCenter: document.queryCommandState('justifyCenter'),
-                justifyRight: document.queryCommandState('justifyRight'),
-                justifyFull: document.queryCommandState('justifyFull'),
+                justifyLeft: textAlign === 'left',
+                justifyCenter: textAlign === 'center',
+                justifyRight: textAlign === 'right',
                 formatBlock: blockTag,
                 fontSize: currentFontSize,
                 foreColor: qForeColor ? rgbToHex(qForeColor) : '#000000',
@@ -288,6 +334,13 @@ export default function RichTextEditor() {
     const handleToolbarMouseDown = (e: React.MouseEvent, command: string, value?: string) => {
         e.preventDefault();
         formatText(command, value);
+        if (command === 'justifyLeft') {
+            setActiveFormats(prev => ({ ...prev, justifyLeft: true, justifyCenter: false, justifyRight: false }));
+        } else if (command === 'justifyCenter') {
+            setActiveFormats(prev => ({ ...prev, justifyLeft: false, justifyCenter: true, justifyRight: false }));
+        } else if (command === 'justifyRight') {
+            setActiveFormats(prev => ({ ...prev, justifyLeft: false, justifyCenter: false, justifyRight: true }));
+        }
     };
 
     // --- Selection Helpers for Dropdowns & Color Pickers ---
@@ -311,6 +364,14 @@ export default function RichTextEditor() {
         restoreSelection();
         document.execCommand('styleWithCSS', false, 'true');
         document.execCommand(command, false, value);
+        saveContent();
+    };
+
+    const removeStyle = () => {
+        editorRef.current?.focus();
+        restoreSelection();
+        document.execCommand('styleWithCSS', false, 'true');
+        document.execCommand('removeFormat', false, undefined);
         saveContent();
     };
 
@@ -338,24 +399,6 @@ export default function RichTextEditor() {
                 font.parentNode?.replaceChild(span, font);
             });
         }
-        saveContent();
-    };
-
-    // Helper to wrap selected text in a custom HTML tag (like <code>)
-    const wrapSelectionWithHtml = (tag: string) => {
-        editorRef.current?.focus();
-        restoreSelection();
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return;
-        const range = selection.getRangeAt(0);
-        if (range.collapsed) return;
-        const element = document.createElement(tag);
-        element.appendChild(range.extractContents());
-        range.insertNode(element);
-        selection.removeAllRanges();
-        const newRange = document.createRange();
-        newRange.selectNodeContents(element);
-        selection.addRange(newRange);
         saveContent();
     };
 
@@ -612,7 +655,6 @@ export default function RichTextEditor() {
                 .editor-scroll::-webkit-scrollbar-track { background: transparent; }
                 .editor-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 10px; }
                 .editor-scroll::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
-                .note-content code { background: #f1f5f9; padding: 0.125rem 0.25rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.875rem; }
                 .note-content h1 { font-size: 2rem; font-weight: 800; margin: 1rem 0; }
                 .note-content h2 { font-size: 1.5rem; font-weight: 700; margin: 1rem 0; }
                 .note-content h3 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0; }
@@ -673,8 +715,9 @@ export default function RichTextEditor() {
                         <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'strikeThrough')} title="Strikethrough" active={activeFormats.strikeThrough}>
                             <Strikethrough size={16} strokeWidth={2.5} />
                         </ToolbarButton>
-                        <ToolbarButton onMouseDown={(e) => { e.preventDefault(); wrapSelectionWithHtml('code'); }} title="Inline Code">
-                            <Code size={16} strokeWidth={2.5} />
+
+                        <ToolbarButton onMouseDown={(e) => { e.preventDefault(); removeStyle(); }} title="Remove style">
+                            <Eraser size={16} strokeWidth={2.5} />
                         </ToolbarButton>
 
                         <ToolbarDivider />
@@ -719,9 +762,6 @@ export default function RichTextEditor() {
                         </ToolbarButton>
                         <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyRight')} title="Align right" active={activeFormats.justifyRight}>
                             <AlignRight size={16} strokeWidth={2.5} />
-                        </ToolbarButton>
-                        <ToolbarButton onMouseDown={(e) => handleToolbarMouseDown(e, 'justifyFull')} title="Justify" active={activeFormats.justifyFull}>
-                            <AlignJustify size={16} strokeWidth={2.5} />
                         </ToolbarButton>
 
                         <ToolbarDivider />

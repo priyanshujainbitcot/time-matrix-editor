@@ -203,6 +203,23 @@
   font-size: 0.9em;
 }
 
+[contenteditable] pre {
+  background-color: var(--muted);
+  border-radius: 0.5rem;
+  padding: 1em;
+  margin: 1em 0;
+  overflow-x: auto;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+[contenteditable] pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.875em;
+  line-height: 1.7;
+}
+
 [contenteditable] hr {
   border: none;
   border-top: 1px solid #e5e7eb;
