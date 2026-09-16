@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "TNMatrix Notes Editor",
+  "version": "1.0.0",
+  "description": "A powerful note-taking and task management extension that replaces your new tab with a productivity matrix",
+  "author": "Your Name",
+  
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  },
+  
+  "permissions": [
+    "storage",
+    "unlimitedStorage"
+  ],
+  
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; style-src 'self' 'unsafe-inline'"
+  },
+  
+  "action": {
+    "default_title": "TNMatrix Notes"
+  }
+}

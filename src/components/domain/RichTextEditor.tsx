@@ -1,7 +1,6 @@
 'use client';
 
 import { useRef, useEffect, useState, useCallback } from 'react';
-import DOMPurify from 'dompurify';
 import { 
     Bold, Italic, Link, Link2Off, Underline, Strikethrough, 
     List, ListOrdered, Image as ImageIcon, Minus, Plus, FileText,
@@ -14,6 +13,14 @@ import { createNote, db, getCurrentTimestamp } from '@/services/databaseService'
 import Toast, { ToastType } from '@/components/ui/Toast';
 import { notifyNotesChanged } from '@/services/crossTabSync';
 
+// Initialize DOMPurify synchronously for extension context
+let DOMPurify: any = null;
+if (typeof window !== 'undefined') {
+    import('dompurify').then(module => {
+        DOMPurify = module.default;
+    });
+}
+
 const escapeHtml = (value: string) => value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -21,10 +28,18 @@ const escapeHtml = (value: string) => value
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 
-const sanitizeNoteHtml = (html: string) => DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|data:image\/(?:gif|jpe?g|png|webp|bmp|svg\+xml);)/i,
-});
+const sanitizeNoteHtml = (html: string) => {
+    // If DOMPurify is not ready yet, return escaped HTML as fallback
+    if (!DOMPurify) {
+        console.warn('DOMPurify not initialized yet, returning original HTML');
+        return html;
+    }
+    
+    return DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true },
+        ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|data:image\/(?:gif|jpe?g|png|webp|bmp|svg\+xml);)/i,
+    });
+};
 
 const renderInlineMarkdown = (value: string) => {
     const replacements: string[] = [];

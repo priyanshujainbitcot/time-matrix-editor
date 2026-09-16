@@ -1,42 +1,50 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
 import { User } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
+import { useAppDispatch, useAppSelector } from '@/store/hooks';
+import { setView, type AppView } from '@/store/slices/navigationSlice';
 
 export default function Header() {
-    const pathname = usePathname();
+    const dispatch = useAppDispatch();
+    const currentView = useAppSelector((state) => state.navigation.currentView);
 
-    const navItems = [
-        { label: 'MATRIX', path: '/matrix' },
-        { label: 'TASKS', path: '/tasks' },
-        { label: 'NOTES', path: '/notes' },
+    const navItems: Array<{ label: string; view: AppView }> = [
+        { label: 'DEFAULT', view: 'default' },
+        { label: 'MATRIX', view: 'matrix' },
+        { label: 'TASKS', view: 'tasks' },
+        { label: 'NOTES', view: 'notes' },
     ];
+
+    const handleNavClick = (view: AppView) => {
+        dispatch(setView(view));
+    };
 
     return (
         <header className="flex items-center justify-between px-8 py-4 bg-card border-b border-border sticky top-0 z-50 shadow-sm">
 
-            <div className="text-2xl font-extrabold tracking-tight text-foreground">
-                <Link href="/notes"><span className="text-blue-600">T</span><span className="text-blue-600">N</span>Matrix</Link>
+            <div 
+                className="text-2xl font-extrabold tracking-tight text-foreground cursor-pointer"
+                onClick={() => handleNavClick('default')}
+            >
+                <span className="text-blue-600">T</span><span className="text-blue-600">N</span>Matrix
             </div>
 
             <nav className="flex space-x-12">
                 {navItems.map((item) => {
-
-                    const isActive = pathname?.startsWith(item.path);
+                    const isActive = currentView === item.view;
 
                     return (
-                        <Link
-                            key={item.path}
-                            href={item.path}
+                        <button
+                            key={item.view}
+                            onClick={() => handleNavClick(item.view)}
                             className={`text-sm font-semibold tracking-wide pb-1 transition-colors border-b-2 ${isActive
                                 ? 'border-blue-600 text-blue-600'
                                 : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/40'
                                 }`}
                         >
                             {item.label}
-                        </Link>
+                        </button>
                     );
                 })}
             </nav>

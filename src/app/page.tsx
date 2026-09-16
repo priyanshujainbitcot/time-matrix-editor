@@ -1,5 +1,11 @@
-import { redirect } from 'next/navigation';
+import ExtensionApp from '@/components/ExtensionApp';
+import DataLoader from '@/components/DataLoader';
 
 export default function RootPage() {
-    redirect('/notes');
+    return (
+        <>
+            <DataLoader />
+            <ExtensionApp />
+        </>
+    );
 }
