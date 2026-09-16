@@ -11,7 +11,8 @@
   
   "permissions": [
     "storage",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "topSites"
   ],
   
   "content_security_policy": {

@@ -46,6 +46,30 @@ const sanitizeNoteHtml = (html: string) => {
     });
 };
 
+const removeBackgroundStyles = (html: string) => {
+    const documentFragment = new DOMParser().parseFromString(html, 'text/html');
+
+    documentFragment.body.querySelectorAll<HTMLElement>('*').forEach(element => {
+        element.removeAttribute('bgcolor');
+        element.removeAttribute('background');
+
+        for (let index = element.style.length - 1; index >= 0; index--) {
+            const property = element.style[index];
+            if (property.toLowerCase().startsWith('background')) {
+                element.style.removeProperty(property);
+            }
+        }
+
+        if (!element.style.cssText) {
+            element.removeAttribute('style');
+        }
+    });
+
+    return documentFragment.body.innerHTML;
+};
+
+const sanitizePastedHtml = (html: string) => sanitizeNoteHtml(removeBackgroundStyles(html));
+
 const renderInlineMarkdown = (value: string) => {
     const replacements: string[] = [];
     const markdownUrl = '(https?:\\/\\/(?:[^()\\s]|\\([^()\\s]*\\))+)';
@@ -743,7 +767,7 @@ export default function RichTextEditor() {
         if (/([#*_~\[\]\(\)])/.test(text) && !html) {
             document.execCommand('insertHTML', false, sanitizeNoteHtml(markdownToHtml(text)));
         } else if (html) {
-            document.execCommand('insertHTML', false, sanitizeNoteHtml(html));
+            document.execCommand('insertHTML', false, sanitizePastedHtml(html));
         } else {
             // Auto-link plain text URLs
             const urlRegex = /(https?:\/\/[^\s]+)/g;
