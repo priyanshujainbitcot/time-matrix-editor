@@ -17,9 +17,10 @@ Open [http://localhost:3000](http://localhost:3000).
 npm run lint
 npm run typecheck
 npm run build
+npm run build:extension
 ```
 
-The application currently has no automated browser or unit test suite. The lint, typecheck, and production build commands are the current regression checks.
+The application currently has no automated browser or unit test suite. The lint, typecheck, and production build commands are the current regression checks. To generate the folder for `chrome://extensions`, always use `npm run build:extension`; it removes Next.js internal files that Chrome reserves, renames the asset directory, and copies the extension manifest.
 
 ## Structure
 
