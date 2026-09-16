@@ -2,7 +2,7 @@
 
 A local-first task and notes workspace organized around the FranklinCovey time matrix.
 
-## Development
+## Run Locally
 
 ```bash
 npm install
@@ -10,6 +10,26 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+## Use as a Chrome Extension
+
+Build the extension:
+
+```bash
+npm run build:extension
+```
+
+Then load it in Chrome:
+
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the `out` folder.
+5. Open a new tab.
+
+After making changes, run `npm run build:extension` again and click **Reload** on the extension page.
+
+Always use `npm run build:extension` for Chrome. Do not load the output from `npm run build` directly.
 
 ## Quality checks
 
