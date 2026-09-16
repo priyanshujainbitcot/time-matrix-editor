@@ -13,6 +13,11 @@ import { createNote, db, getCurrentTimestamp } from '@/services/databaseService'
 import Toast, { ToastType } from '@/components/ui/Toast';
 import { notifyNotesChanged } from '@/services/crossTabSync';
 
+type SelectionBookmark = {
+    start: number;
+    end: number;
+};
+
 // Initialize DOMPurify synchronously for extension context
 let DOMPurify: any = null;
 if (typeof window !== 'undefined') {
@@ -182,6 +187,7 @@ export default function RichTextEditor() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const linkSelectionRef = useRef<Range | null>(null);
     const savedSelectionRef = useRef<Range | null>(null); 
+    const savedSelectionBookmarkRef = useRef<SelectionBookmark | null>(null);
     const dispatch = useAppDispatch();
     
     const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
@@ -325,6 +331,16 @@ export default function RichTextEditor() {
         }
     }, [activeNoteId, activeNote, dispatch, flushPendingSave, scheduleNoteSave]);
 
+    useEffect(() => {
+        savedSelectionRef.current = null;
+        savedSelectionBookmarkRef.current = null;
+        linkSelectionRef.current = null;
+        linkElementRef.current = null;
+        imageElementRef.current = null;
+        imageSelectionRef.current = null;
+        setIsLinkDialogOpen(false);
+    }, [activeNoteId]);
+
     const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const newTitle = e.target.value;
         if (!activeNote) return;
@@ -341,9 +357,19 @@ export default function RichTextEditor() {
     };
 
     const formatText = (command: string, value?: string) => {
+        const selection = window.getSelection();
+        if (!selection || !editorRef.current) return;
+
+        if (!editorRef.current.contains(selection.anchorNode)) {
+            restoreSelection();
+        }
+
+        const activeSelection = window.getSelection();
+        if (!activeSelection || !editorRef.current.contains(activeSelection.anchorNode)) return;
+
         document.execCommand(command, false, value);
         editorRef.current?.focus();
-        saveContent();
+        saveAndKeepSelection();
     };
 
     const handleToolbarMouseDown = (e: React.MouseEvent, command: string, value?: string) => {
@@ -362,39 +388,138 @@ export default function RichTextEditor() {
     const saveSelection = () => {
         const selection = window.getSelection();
         if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
-            savedSelectionRef.current = selection.getRangeAt(0).cloneRange();
+            const range = selection.getRangeAt(0);
+            savedSelectionRef.current = range.cloneRange();
+            savedSelectionBookmarkRef.current = {
+                start: getTextOffset(editorRef.current, range.startContainer, range.startOffset),
+                end: getTextOffset(editorRef.current, range.endContainer, range.endOffset),
+            };
         }
+    };
+
+    const getTextOffset = (root: HTMLElement, container: Node, offset: number) => {
+        const range = document.createRange();
+        range.selectNodeContents(root);
+        range.setEnd(container, offset);
+        return range.toString().length;
+    };
+
+    const isRangeOffsetValid = (container: Node, offset: number) => {
+        if (offset < 0) return false;
+        return container.nodeType === Node.TEXT_NODE
+            ? offset <= (container.textContent?.length ?? 0)
+            : offset <= container.childNodes.length;
+    };
+
+    const findTextPosition = (root: HTMLElement, targetOffset: number) => {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let currentOffset = 0;
+        let node = walker.nextNode();
+
+        while (node) {
+            const textLength = node.textContent?.length || 0;
+            if (targetOffset <= currentOffset + textLength) {
+                return { node, offset: targetOffset - currentOffset };
+            }
+            currentOffset += textLength;
+            node = walker.nextNode();
+        }
+
+        return { node: root, offset: root.childNodes.length };
+    };
+
+    const restoreBookmarkedSelection = () => {
+        const root = editorRef.current;
+        const bookmark = savedSelectionBookmarkRef.current;
+        const selection = window.getSelection();
+        if (!root || !bookmark || !selection) return false;
+
+        const start = findTextPosition(root, bookmark.start);
+        const end = findTextPosition(root, bookmark.end);
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        savedSelectionRef.current = range.cloneRange();
+        return true;
     };
 
     const restoreSelection = () => {
         const selection = window.getSelection();
-        if (savedSelectionRef.current && selection) {
-            selection.removeAllRanges();
-            selection.addRange(savedSelectionRef.current);
+        const range = savedSelectionRef.current;
+        const root = editorRef.current;
+
+        if (
+            range
+            && selection
+            && root?.contains(range.startContainer)
+            && root.contains(range.endContainer)
+            && isRangeOffsetValid(range.startContainer, range.startOffset)
+            && isRangeOffsetValid(range.endContainer, range.endOffset)
+        ) {
+            try {
+                selection.removeAllRanges();
+                selection.addRange(range.cloneRange());
+                return;
+            } catch {
+                restoreBookmarkedSelection();
+                return;
+            }
+        }
+
+        if (range) {
+            restoreBookmarkedSelection();
         }
     };
 
+    const saveAndKeepSelection = () => {
+        saveContent();
+        restoreSelection();
+        window.setTimeout(() => {
+            editorRef.current?.focus();
+            restoreSelection();
+        }, 0);
+    };
+
+    const restoreSelectionAfterColorPicker = () => {
+        window.setTimeout(() => {
+            editorRef.current?.focus();
+            restoreSelection();
+        }, 0);
+    };
+
     const applyColor = (command: 'foreColor' | 'hiliteColor', value: string) => {
+        saveSelection();
         editorRef.current?.focus();
         restoreSelection();
         document.execCommand('styleWithCSS', false, 'true');
-        document.execCommand(command, false, value);
-        saveContent();
+        if (command === 'hiliteColor') {
+            const applied = document.execCommand('hiliteColor', false, value);
+            if (!applied) document.execCommand('backColor', false, value);
+        } else {
+            document.execCommand(command, false, value);
+        }
+        restoreBookmarkedSelection();
+        restoreSelection();
+        saveAndKeepSelection();
     };
 
     const removeStyle = () => {
+        saveSelection();
         editorRef.current?.focus();
         restoreSelection();
-        document.execCommand('styleWithCSS', false, 'true');
-        document.execCommand('removeFormat', false, undefined);
-        saveContent();
+        document.execCommand('removeFormat');
+        restoreSelection();
+        saveAndKeepSelection();
     };
 
     const applyFormatBlock = (tag: string) => {
         editorRef.current?.focus();
         restoreSelection();
         document.execCommand('formatBlock', false, `<${tag}>`);
-        saveContent();
+        restoreSelection();
+        saveAndKeepSelection();
     };
 
     const applyFontSize = (size: string) => {
@@ -414,7 +539,8 @@ export default function RichTextEditor() {
                 font.parentNode?.replaceChild(span, font);
             });
         }
-        saveContent();
+        restoreSelection();
+        saveAndKeepSelection();
     };
 
     const findLinkFromNode = (node: Node | null | undefined) => {
@@ -440,6 +566,7 @@ export default function RichTextEditor() {
         e.preventDefault();
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        if (!range || !editorRef.current?.contains(range.commonAncestorContainer)) return;
         const anchor = findLinkFromNode(range?.startContainer)
             || findLinkFromNode(range?.endContainer)
             || findLinkFromNode(range?.commonAncestorContainer);
@@ -536,6 +663,7 @@ export default function RichTextEditor() {
     const handleImageMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
         const selection = window.getSelection();
+        if (!selection || !editorRef.current?.contains(selection.anchorNode)) return;
         imageSelectionRef.current = selection && selection.rangeCount
             ? selection.getRangeAt(0).cloneRange()
             : null;
@@ -545,9 +673,16 @@ export default function RichTextEditor() {
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+        const noteId = activeNote?.id;
+        if (!noteId || !file.type.startsWith('image/') || file.type === 'image/svg+xml' || file.size > 5 * 1024 * 1024) {
+            showLinkError('Choose a raster image smaller than 5 MB.');
+            e.target.value = '';
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = () => {
+            if (activeNoteId !== noteId || !editorRef.current) return;
             const base64Image = reader.result as string;
             const imgHtml = `<img src="${base64Image}" style="max-width: 100%; border-radius: 8px; margin: 16px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08);" />`;
             const selection = window.getSelection();
@@ -571,6 +706,11 @@ export default function RichTextEditor() {
             e.preventDefault();
             const imageFile = imageItem.getAsFile();
             if (!imageFile) return;
+            const noteId = activeNote?.id;
+            if (!noteId || imageFile.type === 'image/svg+xml' || imageFile.size > 5 * 1024 * 1024) {
+                showLinkError('Paste a raster image smaller than 5 MB.');
+                return;
+            }
 
             const selection = window.getSelection();
             savedSelectionRef.current = selection && selection.rangeCount
@@ -579,6 +719,7 @@ export default function RichTextEditor() {
 
             const reader = new FileReader();
             reader.onload = () => {
+                if (activeNoteId !== noteId || !editorRef.current) return;
                 editorRef.current?.focus();
                 const savedSelection = savedSelectionRef.current;
                 if (savedSelection) {
@@ -610,7 +751,7 @@ export default function RichTextEditor() {
             const linkedText = escapedText.replace(urlRegex, (url) => 
                 `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
             );
-            document.execCommand('insertHTML', false, linkedText);
+            document.execCommand('insertHTML', false, linkedText.replace(/\r?\n/g, '<br>'));
         }
         saveContent();
     };
@@ -632,6 +773,12 @@ export default function RichTextEditor() {
         scheduleNoteSave({ id: activeNote.id, content, title: currentTitle });
         if (saveImmediately) flushPendingSave();
     };
+
+    useEffect(() => {
+        return () => {
+            flushPendingSave();
+        };
+    }, [flushPendingSave]);
 
     const handleCreateNote = async () => {
         const newNote = await createNote();
@@ -744,6 +891,7 @@ export default function RichTextEditor() {
                                 type="color"
                                 value={activeFormats.foreColor || '#000000'}
                                 onMouseDown={saveSelection}
+                                onBlur={restoreSelectionAfterColorPicker}
                                 onChange={(e) => applyColor('foreColor', e.target.value)}
                                 className="absolute inset-0 opacity-0 cursor-pointer"
                             />
@@ -756,6 +904,7 @@ export default function RichTextEditor() {
                                 type="color"
                                 value={activeFormats.hiliteColor || '#ffff00'}
                                 onMouseDown={saveSelection}
+                                onBlur={restoreSelectionAfterColorPicker}
                                 onChange={(e) => applyColor('hiliteColor', e.target.value)}
                                 className="absolute inset-0 opacity-0 cursor-pointer"
                             />
