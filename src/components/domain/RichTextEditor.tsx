@@ -302,7 +302,7 @@ export default function RichTextEditor() {
             let alignElement = selection.anchorNode?.parentElement;
             let textAlign = '';
             while (alignElement && alignElement !== editorRef.current) {
-                if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'DIV'].includes(alignElement.tagName)) {
+                if (['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'DIV', 'LI', 'UL', 'OL'].includes(alignElement.tagName)) {
                     textAlign = window.getComputedStyle(alignElement).textAlign;
                     if (textAlign) break;
                 }
@@ -384,6 +384,10 @@ export default function RichTextEditor() {
         const selection = window.getSelection();
         if (!selection || !editorRef.current) return;
 
+        if (editorRef.current.contains(selection.anchorNode)) {
+            saveSelection();
+        }
+
         if (!editorRef.current.contains(selection.anchorNode)) {
             restoreSelection();
         }
@@ -396,9 +400,51 @@ export default function RichTextEditor() {
         saveAndKeepSelection();
     };
 
+    const alignText = (command: 'justifyLeft' | 'justifyCenter' | 'justifyRight') => {
+        const selection = window.getSelection();
+        if (!selection || !editorRef.current) return;
+
+        if (!editorRef.current.contains(selection.anchorNode)) {
+            restoreSelection();
+        }
+
+        const activeSelection = window.getSelection();
+        if (!activeSelection || !editorRef.current.contains(activeSelection.anchorNode)) return;
+
+        saveSelection();
+
+        const range = activeSelection.rangeCount > 0 ? activeSelection.getRangeAt(0) : null;
+        const listContainers = range
+            ? Array.from(editorRef.current.querySelectorAll<HTMLElement>('ul, ol'))
+                .filter(list => range.intersectsNode(list))
+            : [];
+        const alignment = command === 'justifyCenter' ? 'center' : command === 'justifyRight' ? 'right' : 'left';
+
+        if (listContainers.length > 0) {
+            listContainers.forEach(list => {
+                list.style.textAlign = alignment;
+                list.style.listStylePosition = 'inside';
+                Array.from(list.children)
+                    .filter((child): child is HTMLElement => child instanceof HTMLElement && child.tagName === 'LI')
+                    .forEach(item => {
+                        item.style.textAlign = alignment;
+                    });
+            });
+            editorRef.current.focus();
+            saveAndKeepSelection();
+            return;
+        }
+
+        formatText(command);
+    };
+
     const handleToolbarMouseDown = (e: React.MouseEvent, command: string, value?: string) => {
         e.preventDefault();
-        formatText(command, value);
+        if (command === 'justifyLeft' || command === 'justifyCenter' || command === 'justifyRight') {
+            alignText(command);
+        } else {
+            formatText(command, value);
+        }
         if (command === 'justifyLeft') {
             setActiveFormats(prev => ({ ...prev, justifyLeft: true, justifyCenter: false, justifyRight: false }));
         } else if (command === 'justifyCenter') {
@@ -687,10 +733,13 @@ export default function RichTextEditor() {
     const handleImageMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
         const selection = window.getSelection();
-        if (!selection || !editorRef.current?.contains(selection.anchorNode)) return;
-        imageSelectionRef.current = selection && selection.rangeCount
-            ? selection.getRangeAt(0).cloneRange()
-            : null;
+        if (selection && selection.rangeCount > 0 && editorRef.current?.contains(selection.anchorNode)) {
+            saveSelection();
+            imageSelectionRef.current = selection.getRangeAt(0).cloneRange();
+        } else {
+            restoreSelection();
+            imageSelectionRef.current = savedSelectionRef.current?.cloneRange() || null;
+        }
         fileInputRef.current?.click();
     };
 
@@ -715,6 +764,7 @@ export default function RichTextEditor() {
                 selection?.removeAllRanges();
                 selection?.addRange(savedRange);
             }
+            editorRef.current.focus();
             document.execCommand('insertHTML', false, imgHtml);
             saveContent();
             imageSelectionRef.current = null;
@@ -786,6 +836,30 @@ export default function RichTextEditor() {
             e.preventDefault();
             window.open(link.href, '_blank', 'noopener,noreferrer');
         }
+    };
+
+    const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'Enter' || e.shiftKey) return;
+
+        const selection = window.getSelection();
+        const anchorElement = selection?.anchorNode instanceof Element
+            ? selection.anchorNode
+            : selection?.anchorNode?.parentElement;
+
+        // Keep native list behavior so Enter creates the next list item normally.
+        if (anchorElement?.closest('li')) return;
+
+        e.preventDefault();
+        document.execCommand('insertParagraph');
+        document.execCommand('removeFormat');
+        ['bold', 'italic', 'underline', 'strikeThrough', 'subscript', 'superscript'].forEach(command => {
+            if (document.queryCommandState(command)) {
+                document.execCommand(command, false, 'false');
+            }
+        });
+        document.execCommand('formatBlock', false, '<p>');
+        editorRef.current?.focus();
+        saveContent();
     };
 
     const saveContent = (saveImmediately = false) => {
@@ -991,6 +1065,7 @@ export default function RichTextEditor() {
                         <div
                             ref={editorRef}
                             contentEditable={true}
+                            onKeyDown={handleEditorKeyDown}
                             onPaste={handlePaste}
                             onClick={handleEditorClick}
                             onInput={() => saveContent()}
